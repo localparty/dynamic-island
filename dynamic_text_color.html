@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Production Status Bar Color with Web Workers</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f7;
+            overflow-x: hidden;
+        }
+
+        /* Fixed status bar with safe area support */
+        .status-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 44px;
+            background: transparent;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 1000;
+            transition: color 0.2s ease, text-shadow 0.2s ease;
+            
+            /* Safe area support */
+            padding-top: env(safe-area-inset-top);
+            padding-left: max(20px, env(safe-area-inset-left));
+            padding-right: max(20px, env(safe-area-inset-right));
+            height: calc(44px + env(safe-area-inset-top));
+        }
+
+        .status-left, .status-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .signal-bars {
+            display: flex;
+            gap: 2px;
+        }
+
+        .signal-bar {
+            width: 3px;
+            background: currentColor;
+            border-radius: 1px;
+            transition: opacity 0.2s ease;
+        }
+        .signal-bar:nth-child(1) { height: 4px; }
+        .signal-bar:nth-child(2) { height: 6px; }
+        .signal-bar:nth-child(3) { height: 8px; }
+        .signal-bar:nth-child(4) { height: 10px; opacity: 0.6; }
+
+        .battery-icon {
+            width: 22px;
+            height: 11px;
+            border: 1.5px solid currentColor;
+            border-radius: 2px;
+            position: relative;
+            transition: border-color 0.2s ease;
+        }
+
+        .battery-icon::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: 2px;
+            width: 2px;
+            height: 5px;
+            background: currentColor;
+            border-radius: 0 1px 1px 0;
+            transition: background-color 0.2s ease;
+        }
+
+        .battery-level {
+            position: absolute;
+            left: 1px;
+            top: 1px;
+            bottom: 1px;
+            width: 70%;
+            background: currentColor;
+            border-radius: 1px;
+            transition: background-color 0.2s ease;
+        }
+
+        .wifi-icon {
+            font-size: 16px;
+            transition: color 0.2s ease;
+        }
+
+        /* Dynamic color classes */
+        .status-light {
+            color: white !important;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+        }
+
+        .status-dark {
+            color: #1d1d1f !important;
+            text-shadow: 0 1px 3px rgba(255,255,255,0.8);
+        }
+
+        /* Scrollable content */
+        .content {
+            padding-top: calc(44px + env(safe-area-inset-top, 0px));
+            min-height: 200vh;
+        }
+
+        .content-section {
+            min-height: 100vh;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+        }
+
+        .section-1 {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .section-2 {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .section-3 {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .section-4 {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            color: #1d1d1f;
+        }
+
+        .section-5 {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: #1d1d1f;
+        }
+
+        .section-6 {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            color: #1d1d1f;
+        }
+
+        .section-7 {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+        }
+
+        .section-8 {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            color: #1d1d1f;
+            border-bottom: 1px solid #eee;
+        }
+
+        .section-title {
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .section-content {
+            font-size: 18px;
+            line-height: 1.6;
+            max-width: 600px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .emoji {
+            font-size: 48px;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        /* Controls panel */
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 1001;
+            font-size: 11px;
+            max-width: 240px;
+            font-family: monospace;
+        }
+
+        .control-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            align-items: center;
+        }
+
+        .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-indicator.working {
+            background: #ff9500;
+            animation: pulse 1s infinite;
+        }
+
+        .status-indicator.idle {
+            background: #34c759;
+        }
+
+        .status-indicator.scrolling {
+            background: #007aff;
+            animation: pulse 0.5s infinite;
+        }
+
+        .status-indicator.error {
+            background: #ff3b30;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .brightness-bar {
+            width: 60px;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .brightness-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #000 0%, #fff 100%);
+            transition: width 0.2s ease;
+        }
+
+        /* Hidden canvas for rendering */
+        .hidden-canvas {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            pointer-events: none;
+        }
+
+        .scroll-indicator {
+            position: fixed;
+            top: 50px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .scroll-indicator.visible {
+            opacity: 1;
+        }
+
+        .worker-queue {
+            font-size: 9px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <!-- Fixed status bar that adapts color -->
+    <div class="status-bar" id="statusBar">
+        <div class="status-left">
+            <span id="timeDisplay">2:36 PM</span>
+        </div>
+        <div class="status-right">
+            <div class="signal-bars">
+                <div class="signal-bar"></div>
+                <div class="signal-bar"></div>
+                <div class="signal-bar"></div>
+                <div class="signal-bar"></div>
+            </div>
+            <span class="wifi-icon">📶</span>
+            <div class="battery-icon">
+                <div class="battery-level"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scroll indicator -->
+    <div class="scroll-indicator" id="scrollIndicator">
+        Scroll State: <span id="scrollState">Idle</span>
+    </div>
+
+    <!-- Scrollable content with various backgrounds -->
+    <div class="content" id="scrollContent">
+        <div class="content-section section-1">
+            <span class="emoji">🌌</span>
+            <h2 class="section-title">Deep Space</h2>
+            <p class="section-content">Dark backgrounds trigger light text. Web Workers analyze colors off the main thread for buttery smooth performance during scroll momentum.</p>
+        </div>
+
+        <div class="content-section section-2">
+            <span class="emoji">🌅</span>
+            <h2 class="section-title">Vibrant Sunrise</h2>
+            <p class="section-content">Medium-bright gradients with light text. Background color analysis happens in a separate thread, maintaining 60fps scrolling performance.</p>
+        </div>
+
+        <div class="content-section section-3">
+            <span class="emoji">🌊</span>
+            <h2 class="section-title">Ocean Blues</h2>
+            <p class="section-content">Cool blue tones using perceived luminance calculations. The worker thread handles complex sRGB to linear RGB conversions smoothly.</p>
+        </div>
+
+        <div class="content-section section-4">
+            <span class="emoji">🌿</span>
+            <h2 class="section-title">Bright Nature</h2>
+            <p class="section-content">Bright backgrounds switch to dark text! Canvas rendering and color analysis happen off-thread, keeping the UI responsive during momentum scrolling.</p>
+        </div>
+
+        <div class="content-section section-5">
+            <span class="emoji">🌺</span>
+            <h2 class="section-title">Sunny Paradise</h2>
+            <p class="section-content">Pink-to-yellow gradients analyzed with iOS-style luminance weighting. Worker threads prevent frame drops during complex calculations.</p>
+        </div>
+
+        <div class="content-section section-6">
+            <span class="emoji">🌸</span>
+            <h2 class="section-title">Pastel Dreams</h2>
+            <p class="section-content">Soft pastels requiring dark text. The worker queue manages multiple analysis requests efficiently during rapid scrolling.</p>
+        </div>
+
+        <div class="content-section section-7">
+            <span class="emoji">⛈️</span>
+            <h2 class="section-title">Storm Clouds</h2>
+            <p class="section-content">Back to dark backgrounds and light text. Web Workers handle the heavy lifting while the main thread stays free for smooth animations.</p>
+        </div>
+
+        <div class="content-section section-8">
+            <span class="emoji">☀️</span>
+            <h2 class="section-title">Pure Light</h2>
+            <p class="section-content">Maximum brightness test with perfect contrast. Production-ready implementation with error handling and performance monitoring.</p>
+        </div>
+    </div>
+
+    <!-- Controls panel -->
+    <div class="controls">
+        <div class="control-row">
+            <span>Worker:</span>
+            <span><span class="status-indicator idle" id="workerStatus"></span><span id="workerStatusText">Ready</span></span>
+        </div>
+        <div class="control-row">
+            <span>Scroll:</span>
+            <span><span class="status-indicator idle" id="scrollStatus"></span><span id="scrollStatusText">Idle</span></span>
+        </div>
+        <div class="control-row">
+            <span>Queue:</span>
+            <span id="queueLength">0</span>
+        </div>
+        <div class="control-row">
+            <span>Analysis:</span>
+            <span id="frameTime">--ms</span>
+        </div>
+        <div class="control-row">
+            <span>Brightness:</span>
+            <div class="brightness-bar">
+                <div class="brightness-fill" id="brightnessFill"></div>
+            </div>
+        </div>
+        <div class="control-row">
+            <span>Text Mode:</span>
+            <span id="textMode">Light</span>
+        </div>
+        <div class="control-row">
+            <span>Velocity:</span>
+            <span id="scrollVelocity">0 px/s</span>
+        </div>
+        <div class="control-row">
+            <span>Position:</span>
+            <span id="scrollPosition">0px</span>
+        </div>
+        <div class="worker-queue">
+            Processed: <span id="processedCount">0</span> | 
+            Dropped: <span id="droppedCount">0</span>
+        </div>
+    </div>
+
+    <!-- Hidden canvas for viewport clipping -->
+    <canvas class="hidden-canvas" id="analysisCanvas"></canvas>
+
+    <script>
+        // Create the Web Worker code as a data URL for easy deployment
+        const createWorkerScript = () => {
+            const workerScript = `
+                // Color Analysis Web Worker
+                class ColorAnalysisWorker {
+                    constructor() {
+                        this.requestQueue = new Map();
+                        this.isProcessing = false;
+                        this.processedCount = 0;
+                        this.droppedCount = 0;
+                    }
+
+                    handleMessage(e) {
+                        const { imageData, method, requestId, timestamp } = e.data;
+                        
+                        // Drop old requests if queue is getting too big
+                        if (this.requestQueue.size > 3) {
+                            const oldestRequest = this.requestQueue.keys().next().value;
+                            this.requestQueue.delete(oldestRequest);
+                            this.droppedCount++;
+                        }
+                        
+                        // Add to queue
+                        this.requestQueue.set(requestId, { imageData, method, timestamp });
+                        
+                        if (!this.isProcessing) {
+                            this.processQueue();
+                        }
+                    }
+
+                    async processQueue() {
+                        this.isProcessing = true;
+                        
+                        while (this.requestQueue.size > 0) {
+                            // Get the most recent request
+                            const entries = Array.from(this.requestQueue.entries());
+                            const [requestId, request] = entries[entries.length - 1];
+                            
+                            // Clear older requests
+                            this.requestQueue.clear();
+                            
+                            const startTime = performance.now();
+                            
+                            try {
+                                const brightness = this.analyzeImage(request.imageData, request.method);
+                                const processingTime = performance.now() - startTime;
+                                const shouldUseLightText = brightness < 128;
+                                
+                                this.processedCount++;
+                                
+                                self.postMessage({
+                                    type: 'analysis-complete',
+                                    requestId,
+                                    brightness: Math.round(brightness),
+                                    shouldUseLightText,
+                                    processingTime: Math.round(processingTime * 100) / 100,
+                                    queueStats: {
+                                        processed: this.processedCount,
+                                        dropped: this.droppedCount
+                                    }
+                                });
+                                
+                            } catch (error) {
+                                self.postMessage({
+                                    type: 'analysis-error',
+                                    requestId,
+                                    error: error.message
+                                });
+                            }
+                            
+                            // Small delay to prevent blocking
+                            await new Promise(resolve => setTimeout(resolve, 1));
+                        }
+                        
+                        this.isProcessing = false;
+                    }
+
+                    analyzeImage(imageData, method) {
+                        switch(method) {
+                            case 'luminance':
+                                return this.getPerceivedLuminance(imageData);
+                            case 'average':
+                                return this.getAverageBrightness(imageData);
+                            case 'fast':
+                                return this.getFastBrightness(imageData);
+                            default:
+                                return this.getPerceivedLuminance(imageData);
+                        }
+                    }
+
+                    getPerceivedLuminance(imageData) {
+                        const data = imageData.data;
+                        let luminance = 0;
+                        
+                        // Sample every 4th pixel for performance
+                        for (let i = 0; i < data.length; i += 16) {
+                            const r = data[i] / 255;
+                            const g = data[i + 1] / 255;
+                            const b = data[i + 2] / 255;
+                            
+                            // sRGB to linear RGB conversion
+                            const rsRGB = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
+                            const gsRGB = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
+                            const bsRGB = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
+                            
+                            // Calculate relative luminance (iOS-style)
+                            luminance += 0.2126 * rsRGB + 0.7152 * gsRGB + 0.0722 * bsRGB;
+                        }
+
+                        const pixels = data.length / 16;
+                        return (luminance / pixels) * 255;
+                    }
+
+                    getAverageBrightness(imageData) {
+                        const data = imageData.data;
+                        let r = 0, g = 0, b = 0;
+                        
+                        for (let i = 0; i < data.length; i += 4) {
+                            r += data[i];
+                            g += data[i + 1];
+                            b += data[i + 2];
+                        }
+
+                        const pixels = data.length / 4;
+                        r = Math.floor(r / pixels);
+                        g = Math.floor(g / pixels);
+                        b = Math.floor(b / pixels);
+
+                        return (r + g + b) / 3;
+                    }
+
+                    getFastBrightness(imageData) {
+                        const data = imageData.data;
+                        let brightness = 0;
+                        
+                        // Sample every 16th pixel for maximum speed
+                        for (let i = 0; i < data.length; i += 64) {
+                            brightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+                        }
+
+                        const pixels = data.length / 64;
+                        return brightness / pixels;
+                    }
+                }
+
+                // Initialize worker
+                const worker = new ColorAnalysisWorker();
+
+                self.onmessage = function(e) {
+                    if (e.data.type === 'analyze') {
+                        worker.handleMessage(e);
+                    }
+                };
+
+                // Send ready signal
+                self.postMessage({ type: 'worker-ready' });
+            `;
+            
+            const blob = new Blob([workerScript], { type: 'application/javascript' });
+            return URL.createObjectURL(blob);
+        };
+
+        class StatusBarColorAnalyzer {
+            constructor() {
+                this.canvas = document.getElementById('analysisCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.statusBar = document.getElementById('statusBar');
+                this.scrollContent = document.getElementById('scrollContent');
+                
+                // Worker management
+                this.worker = null;
+                this.requestId = 0;
+                this.pendingRequests = new Set();
+                
+                // Scroll tracking
+                this.lastScrollY = window.scrollY;
+                this.scrollVelocity = 0;
+                this.isScrolling = false;
+                this.scrollTimeout = null;
+                this.momentumTimeout = null;
+                
+                // Performance tracking
+                this.lastFrameTime = performance.now();
+                this.frameCount = 0;
+                this.processedCount = 0;
+                this.droppedCount = 0;
+                
+                // Analysis throttling
+                this.lastAnalysis = 0;
+                this.analysisThrottle = 16; // ~60fps max
+                
+                this.init();
+            }
+
+            async init() {
+                await this.initWorker();
+                this.setupScrollTracking();
+                this.updateTime();
+                this.startAnimationLoop();
+                
+                // Initial analysis
+                setTimeout(() => this.analyzeStatusBarRegion(), 100);
+            }
+
+            async initWorker() {
+                try {
+                    const workerUrl = createWorkerScript();
+                    this.worker = new Worker(workerUrl);
+                    
+                    this.worker.onmessage = (e) => {
+                        this.handleWorkerMessage(e.data);
+                    };
+
+                    this.worker.onerror = (error) => {
+                        console.error('Worker error:', error);
+                        this.updateWorkerStatus('error', 'Error');
+                    };
+
+                    // Wait for worker ready signal
+                    await new Promise((resolve) => {
+                        const handleReady = (e) => {
+                            if (e.data.type === 'worker-ready') {
+                                this.worker.removeEventListener('message', handleReady);
+                                resolve();
+                            }
+                        };
+                        this.worker.addEventListener('message', handleReady);
+                    });
+
+                    this.updateWorkerStatus('idle', 'Ready');
+                    
+                } catch (error) {
+                    console.error('Failed to initialize worker:', error);
+                    this.updateWorkerStatus('error', 'Failed');
+                }
+            }
+
+            handleWorkerMessage(data) {
+                switch(data.type) {
+                    case 'analysis-complete':
+                        this.handleAnalysisComplete(data);
+                        break;
+                    case 'analysis-error':
+                        this.handleAnalysisError(data);
+                        break;
+                }
+            }
+
+            handleAnalysisComplete(data) {
+                const { requestId, brightness, shouldUseLightText, processingTime, queueStats } = data;
+                
+                // Only process if this is still a pending request
+                if (this.pendingRequests.has(requestId)) {
+                    this.pendingRequests.delete(requestId);
+                    
+                    // Update colors
+                    this.updateStatusBarColor(shouldUseLightText, brightness);
+                    
+                    // Update UI
+                    this.updateAnalysisUI(processingTime, brightness, shouldUseLightText);
+                    
+                    // Update queue stats
+                    if (queueStats) {
+                        this.processedCount = queueStats.processed;
+                        this.droppedCount = queueStats.dropped;
+                        this.updateQueueUI();
+                    }
+                }
+                
+                // Update worker status
+                this.updateWorkerStatus('idle', 'Ready');
+            }
+
+            handleAnalysisError(data) {
+                console.error('Analysis error:', data.error);
+                this.pendingRequests.delete(data.requestId);
+                this.updateWorkerStatus('error', 'Error');
+            }
+
+            setupScrollTracking() {
+                let ticking = false;
+
+                window.addEventListener('scroll', () => {
+                    if (!ticking) {
+                        requestAnimationFrame(() => {
+                            this.handleScroll();
+                            ticking = false;
+                        });
+                        ticking = true;
+                    }
+                });
+
+                window.addEventListener('touchstart', () => {
+                    this.setScrollState('starting');
+                }, { passive: true });
+
+                window.addEventListener('touchend', () => {
+                    this.trackScrollMomentum();
+                }, { passive: true });
+
+                window.addEventListener('wheel', () => {
+                    this.setScrollState('active');
+                    this.trackScrollMomentum();
+                }, { passive: true });
+            }
+
+            handleScroll() {
+                const currentScrollY = window.scrollY;
+                const currentTime = performance.now();
+                const deltaTime = currentTime - this.lastFrameTime;
+                const deltaScroll = currentScrollY - this.lastScrollY;
+
+                if (deltaTime > 0) {
+                    this.scrollVelocity = Math.abs(deltaScroll / deltaTime * 1000);
+                }
+
+                this.lastScrollY = currentScrollY;
+                this.setScrollState('active');
+
+                if (currentTime - this.lastAnalysis >= this.analysisThrottle) {
+                    this.analyzeStatusBarRegion();
+                    this.lastAnalysis = currentTime;
+                }
+
+                this.updateScrollUI();
+
+                clearTimeout(this.scrollTimeout);
+                this.scrollTimeout = setTimeout(() => {
+                    if (this.scrollVelocity < 10) {
+                        this.setScrollState('idle');
+                    }
+                }, 150);
+
+                this.trackScrollMomentum();
+            }
+
+            trackScrollMomentum() {
+                clearTimeout(this.momentumTimeout);
+                
+                const checkMomentum = () => {
+                    const currentScrollY = window.scrollY;
+                    const wasScrolling = this.isScrolling;
+                    
+                    if (Math.abs(currentScrollY - this.lastScrollY) > 1) {
+                        this.lastScrollY = currentScrollY;
+                        this.momentumTimeout = setTimeout(checkMomentum, 50);
+                        
+                        if (!wasScrolling) {
+                            this.setScrollState('momentum');
+                        }
+                        
+                        this.analyzeStatusBarRegion();
+                        this.updateScrollUI();
+                    } else {
+                        this.setScrollState('idle');
+                        this.scrollVelocity = 0;
+                        this.updateScrollUI();
+                    }
+                };
+
+                this.momentumTimeout = setTimeout(checkMomentum, 50);
+            }
+
+            setScrollState(state) {
+                this.isScrolling = (state !== 'idle');
+                
+                const scrollStatus = document.getElementById('scrollStatus');
+                const scrollStatusText = document.getElementById('scrollStatusText');
+                const scrollIndicator = document.getElementById('scrollIndicator');
+                const scrollState = document.getElementById('scrollState');
+
+                scrollStatus.className = `status-indicator ${state === 'idle' ? 'idle' : 'scrolling'}`;
+                scrollStatusText.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+                
+                if (state !== 'idle') {
+                    scrollIndicator.classList.add('visible');
+                    scrollState.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+                } else {
+                    scrollIndicator.classList.remove('visible');
+                }
+            }
+
+            analyzeStatusBarRegion() {
+                if (!this.worker) return;
+                
+                this.updateWorkerStatus('working', 'Working');
+                
+                try {
+                    const scrollY = window.scrollY;
+                    const statusBarHeight = 44;
+                    const viewportWidth = window.innerWidth;
+                    
+                    this.canvas.width = viewportWidth;
+                    this.canvas.height = statusBarHeight;
+                    
+                    this.renderStatusBarRegion(scrollY, statusBarHeight);
+                    
+                    const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    this.requestId++;
+                    this.pendingRequests.add(this.requestId);
+                    
+                    // Send to worker
+                    this.worker.postMessage({
+                        type: 'analyze',
+                        imageData: imageData,
+                        method: 'luminance',
+                        requestId: this.requestId,
+                        timestamp: performance.now()
+                    });
+                    
+                } catch (error) {
+                    console.error('Analysis error:', error);
+                    this.updateWorkerStatus('error', 'Error');
+                }
+            }
+
+            renderStatusBarRegion(scrollY, statusBarHeight) {
+                this.ctx.fillStyle = '#f5f5f7';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                const sections = document.querySelectorAll('.content-section');
+                
+                sections.forEach(section => {
+                    const rect = section.getBoundingClientRect();
+                    const sectionTop = scrollY + rect.top;
+                    const sectionBottom = sectionTop + rect.height;
+                    
+                    if (sectionTop < scrollY + statusBarHeight && sectionBottom > scrollY) {
+                        const overlapHeight = Math.min(statusBarHeight, sectionBottom - scrollY);
+                        
+                        if (overlapHeight > 0) {
+                            this.renderSectionBackground(section, overlapHeight);
+                        }
+                    }
+                });
+            }
+
+            renderSectionBackground(section, height) {
+                const classList = Array.from(section.classList);
+                let gradient = null;
+                
+                if (classList.includes('section-1')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#667eea');
+                    gradient.addColorStop(1, '#764ba2');
+                } else if (classList.includes('section-2')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#f093fb');
+                    gradient.addColorStop(1, '#f5576c');
+                } else if (classList.includes('section-3')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#4facfe');
+                    gradient.addColorStop(1, '#00f2fe');
+                } else if (classList.includes('section-4')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#43e97b');
+                    gradient.addColorStop(1, '#38f9d7');
+                } else if (classList.includes('section-5')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#fa709a');
+                    gradient.addColorStop(1, '#fee140');
+                } else if (classList.includes('section-6')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#a8edea');
+                    gradient.addColorStop(1, '#fed6e3');
+                } else if (classList.includes('section-7')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#2c3e50');
+                    gradient.addColorStop(1, '#3498db');
+                } else if (classList.includes('section-8')) {
+                    gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, height);
+                    gradient.addColorStop(0, '#ffffff');
+                    gradient.addColorStop(1, '#f8f9fa');
+                }
+                
+                if (gradient) {
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.fillRect(0, 0, this.canvas.width, height);
+                }
+            }
+
+            updateStatusBarColor(shouldUseLightText, brightness) {
+                if (shouldUseLightText) {
+                    this.statusBar.className = 'status-bar status-light';
+                } else {
+                    this.statusBar.className = 'status-bar status-dark';
+                }
+            }
+
+            updateWorkerStatus(status, text) {
+                const workerStatus = document.getElementById('workerStatus');
+                const workerStatusText = document.getElementById('workerStatusText');
+                
+                workerStatus.className = `status-indicator ${status}`;
+                workerStatusText.textContent = text;
+            }
+
+            updateAnalysisUI(processingTime, brightness, shouldUseLightText) {
+                document.getElementById('frameTime').textContent = processingTime + 'ms';
+                document.getElementById('textMode').textContent = shouldUseLightText ? 'Light' : 'Dark';
+                
+                const brightnessFill = document.getElementById('brightnessFill');
+                const brightnessPercent = (brightness / 255) * 100;
+                brightnessFill.style.width = brightnessPercent + '%';
+            }
+
+            updateQueueUI() {
+                document.getElementById('queueLength').textContent = this.pendingRequests.size;
+                document.getElementById('processedCount').textContent = this.processedCount;
+                document.getElementById('droppedCount').textContent = this.droppedCount;
+            }
+
+            updateScrollUI() {
+                document.getElementById('scrollVelocity').textContent = Math.round(this.scrollVelocity) + ' px/s';
+                document.getElementById('scrollPosition').textContent = Math.round(window.scrollY) + 'px';
+                this.updateQueueUI();
+            }
+
+            updateTime() {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                document.getElementById('timeDisplay').textContent = timeString;
+                setTimeout(() => this.updateTime(), 1000);
+            }
+
+            startAnimationLoop() {
+                const loop = () => {
+                    const now = performance.now();
+                    const deltaTime = now - this.lastFrameTime;
+                    this.lastFrameTime = now;
+                    this.frameCount++;
+                    requestAnimationFrame(loop);
+                };
+                requestAnimationFrame(loop);
+            }
+        }
+
+        // Initialize when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            new StatusBarColorAnalyzer();
+        });
+    </script>
+</body>
+</html>
