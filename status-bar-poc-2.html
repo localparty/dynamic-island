@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Status Bar POC</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#667eea;padding:20px;display:flex;gap:20px}
+.device{width:390px;height:844px;border-radius:40px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3);position:relative;flex-shrink:0}
+.device iframe{width:100%;height:100%;border:none}
+.status-bar{position:absolute;top:0;left:0;right:0;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 20px;font-size:15px;font-weight:600;z-index:100;pointer-events:none;color:#000}
+.debug{background:#fff;padding:20px;border-radius:15px;flex:1;overflow:auto}
+canvas{border:1px solid #ddd;margin:10px 0;max-width:100%}
+.swatch{height:50px;margin:10px 0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #ddd}
+</style>
+</head><body>
+<div class="device">
+<iframe id="app"></iframe>
+<div class="status-bar" id="statusBar"><div>9:41</div><div>📶📡🔋</div></div>
+</div>
+<div class="debug" id="debug">
+<h2>Debug</h2>
+<div id="info">Waiting...</div>
+<canvas id="leftCanvas"></canvas>
+<canvas id="rightCanvas"></canvas>
+<canvas id="fullCanvas"></canvas>
+</div>
+<script>
+const iframe=document.getElementById('app');
+const statusBar=document.getElementById('statusBar');
+const debug=document.getElementById('debug');
+const info=document.getElementById('info');
+const leftCanvas=document.getElementById('leftCanvas');
+const rightCanvas=document.getElementById('rightCanvas');
+const fullCanvas=document.getElementById('fullCanvas');
+
+iframe.srcdoc=`<!DOCTYPE html>
+<html><head><style>
+body{margin:0;padding:0;font-family:sans-serif}
+.s{height:400px;display:flex}
+.s .left,.s .right{flex:1;display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:bold;color:#fff;text-shadow:2px 2px 4px rgba(0,0,0,0.3)}
+.s:nth-child(1) .left{background:#667eea}
+.s:nth-child(1) .right{background:#764ba2}
+.s:nth-child(2) .left{background:#f093fb}
+.s:nth-child(2) .right{background:#f5576c}
+.s:nth-child(3) .left{background:#4facfe}
+.s:nth-child(3) .right{background:#00f2fe}
+.s:nth-child(4) .left{background:#43e97b}
+.s:nth-child(4) .right{background:#38f9d7}
+.s:nth-child(5) .left{background:#fa709a}
+.s:nth-child(5) .right{background:#fee140}
+.s:nth-child(6) .left{background:#30cfd0}
+.s:nth-child(6) .right{background:#330867}
+.s:nth-child(7) .left{background:#a8edea}
+.s:nth-child(7) .right{background:#fed6e3}
+.s:nth-child(8) .left{background:#ff9a9e}
+.s:nth-child(8) .right{background:#fecfef}
+.s:nth-child(9) .left{background:#ffecd2}
+.s:nth-child(9) .right{background:#fcb69f}
+.s:nth-child(10) .left{background:#ff6e7f}
+.s:nth-child(10) .right{background:#bfe9ff}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script></head>
+<body>
+<div class="s"><div class="left">L1</div><div class="right">R1</div></div>
+<div class="s"><div class="left">L2</div><div class="right">R2</div></div>
+<div class="s"><div class="left">L3</div><div class="right">R3</div></div>
+<div class="s"><div class="left">L4</div><div class="right">R4</div></div>
+<div class="s"><div class="left">L5</div><div class="right">R5</div></div>
+<div class="s"><div class="left">L6</div><div class="right">R6</div></div>
+<div class="s"><div class="left">L7</div><div class="right">R7</div></div>
+<div class="s"><div class="left">L8</div><div class="right">R8</div></div>
+<div class="s"><div class="left">L9</div><div class="right">R9</div></div>
+<div class="s"><div class="left">L10</div><div class="right">R10</div></div>
+<script>
+setInterval(async()=>{
+try{
+const c=await html2canvas(document.body,{x:window.scrollX,y:window.scrollY,width:window.innerWidth,height:window.innerHeight,scale:1,logging:false});
+const ctx=c.getContext('2d');
+const w=c.width,h=44;
+const mid=Math.floor(w/2);
+const leftData=ctx.getImageData(0,0,mid,h);
+const rightData=ctx.getImageData(mid,0,w-mid,h);
+const getAvg=(d)=>{let r=0,g=0,b=0,n=0;for(let i=0;i<d.data.length;i+=4){r+=d.data[i];g+=d.data[i+1];b+=d.data[i+2];n++}return{r:r/n,g:g/n,b:b/n}};
+const l=getAvg(leftData),r=getAvg(rightData);
+const bright=(c)=>c.r*0.299+c.g*0.587+c.b*0.114;
+const lb=bright(l),rb=bright(r);
+const theme=(lb<128||rb<128)?'light':'dark';
+parent.postMessage({action:'theme',theme,leftColor:\`rgb(\${Math.round(l.r)},\${Math.round(l.g)},\${Math.round(l.b)})\`,rightColor:\`rgb(\${Math.round(r.r)},\${Math.round(r.g)},\${Math.round(r.b)})\`,leftBright:lb,rightBright:rb,canvas:c.toDataURL()},'*');
+}catch(e){console.error(e)}
+},1000);
+<\/script></body></html>`;
+
+window.addEventListener('message',(e)=>{
+if(e.data.action==='theme'){
+statusBar.style.color=e.data.theme==='light'?'#fff':'#000';
+info.innerHTML=`<p>Theme: ${e.data.theme}</p><p>Left: ${e.data.leftColor} (bright:${e.data.leftBright.toFixed(0)})</p><p>Right: ${e.data.rightColor} (bright:${e.data.rightBright.toFixed(0)})</p>`;
+const img=new Image();
+img.onload=()=>{
+const fctx=fullCanvas.getContext('2d');
+fullCanvas.width=img.width;fullCanvas.height=img.height;
+fctx.drawImage(img,0,0);
+const w=img.width,h=44,mid=Math.floor(w/2);
+leftCanvas.width=mid;leftCanvas.height=h;
+rightCanvas.width=w-mid;rightCanvas.height=h;
+const lctx=leftCanvas.getContext('2d');
+const rctx=rightCanvas.getContext('2d');
+lctx.drawImage(img,0,0,mid,h,0,0,mid,h);
+rctx.drawImage(img,mid,0,w-mid,h,0,0,w-mid,h);
+};
+img.src=e.data.canvas;
+}
+});
+</script>
+</body></html>

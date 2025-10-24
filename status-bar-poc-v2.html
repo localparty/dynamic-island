@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Status Bar POC v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#667eea;padding:20px;display:flex;gap:20px}
+.device{width:390px;height:844px;border-radius:40px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3);position:relative;flex-shrink:0}
+.device iframe{width:100%;height:100%;border:none}
+.status-bar{position:absolute;top:0;left:0;right:0;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 20px;font-size:15px;font-weight:600;z-index:100;pointer-events:none;color:#000;transition:color 0.2s}
+.debug{background:#fff;padding:20px;border-radius:15px;flex:1;overflow:auto}
+h2{margin-bottom:15px}
+.controls{background:#f5f5f5;padding:15px;border-radius:8px;margin-bottom:20px}
+label{display:block;margin-bottom:5px;font-weight:600;font-size:14px}
+input[type="range"]{width:100%;margin-bottom:5px}
+.value-display{text-align:right;color:#666;font-size:12px;margin-bottom:15px}
+.status-indicator{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+.status-indicator.active{background:#4caf50;box-shadow:0 0 8px #4caf50}
+.status-indicator.inactive{background:#ccc}
+canvas{border:1px solid #ddd;margin:10px 0;max-width:100%;image-rendering:pixelated}
+.swatch{height:50px;margin:10px 0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #ddd}
+#info{font-family:monospace;font-size:11px;line-height:1.6;background:#f9f9f9;padding:10px;border-radius:4px;margin:10px 0}
+</style>
+</head><body>
+<div class="device">
+<iframe id="app"></iframe>
+<div class="status-bar" id="statusBar">
+<div id="time">9:41</div>
+<div id="icons">📶📡🔋</div>
+</div>
+</div>
+<div class="debug">
+<h2>📊 Status Bar Analyzer v2</h2>
+<div class="controls">
+<label for="samplingRate">Sampling Rate (Hz)</label>
+<input type="range" id="samplingRate" min="0.1" max="10" value="1" step="0.1">
+<div class="value-display">
+<span class="status-indicator" id="indicator"></span>
+<span id="rateValue">1.0</span> Hz (<span id="intervalValue">1000</span>ms)
+</div>
+</div>
+<div id="info">Initializing...</div>
+<h3>Time Area</h3>
+<canvas id="timeCanvas"></canvas>
+<div class="swatch" id="timeSwatch">-</div>
+<h3>Icons Area</h3>
+<canvas id="iconsCanvas"></canvas>
+<div class="swatch" id="iconsSwatch">-</div>
+<h3>Full Viewport</h3>
+<canvas id="fullCanvas"></canvas>
+</div>
+<script>
+const iframe=document.getElementById('app');
+const statusBar=document.getElementById('statusBar');
+const timeEl=document.getElementById('time');
+const iconsEl=document.getElementById('icons');
+const samplingRate=document.getElementById('samplingRate');
+const rateValue=document.getElementById('rateValue');
+const intervalValue=document.getElementById('intervalValue');
+const indicator=document.getElementById('indicator');
+const info=document.getElementById('info');
+const timeCanvas=document.getElementById('timeCanvas');
+const iconsCanvas=document.getElementById('iconsCanvas');
+const fullCanvas=document.getElementById('fullCanvas');
+const timeSwatch=document.getElementById('timeSwatch');
+const iconsSwatch=document.getElementById('iconsSwatch');
+
+let currentRate=1.0;
+let analysisInterval=null;
+
+iframe.srcdoc=`<!DOCTYPE html>
+<html><head><style>
+body{margin:0;padding:0;font-family:sans-serif}
+.s{height:400px;display:flex}
+.s .left,.s .right{flex:1;display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:bold;color:#fff;text-shadow:2px 2px 4px rgba(0,0,0,0.3)}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script></head>
+<body>
+<div class="s"><div class="left" style="background:#667eea">L1</div><div class="right" style="background:#764ba2">R1</div></div>
+<div class="s"><div class="left" style="background:#f093fb">L2</div><div class="right" style="background:#f5576c">R2</div></div>
+<div class="s"><div class="left" style="background:#4facfe">L3</div><div class="right" style="background:#00f2fe">R3</div></div>
+<div class="s"><div class="left" style="background:#43e97b">L4</div><div class="right" style="background:#38f9d7">R4</div></div>
+<div class="s"><div class="left" style="background:#fa709a">L5</div><div class="right" style="background:#fee140">R5</div></div>
+<div class="s"><div class="left" style="background:#30cfd0">L6</div><div class="right" style="background:#330867">R6</div></div>
+<div class="s"><div class="left" style="background:#a8edea">L7</div><div class="right" style="background:#fed6e3">R7</div></div>
+<div class="s"><div class="left" style="background:#ff9a9e">L8</div><div class="right" style="background:#fecfef">R8</div></div>
+<div class="s"><div class="left" style="background:#ffecd2">L9</div><div class="right" style="background:#fcb69f">R9</div></div>
+<div class="s"><div class="left" style="background:#ff6e7f">L10</div><div class="right" style="background:#bfe9ff">R10</div></div>
+<script>
+window.addEventListener('message',async(e)=>{
+if(e.data.action==='analyze'){
+try{
+const regions=e.data.regions;
+const c=await html2canvas(document.body,{x:window.scrollX,y:window.scrollY,width:window.innerWidth,height:window.innerHeight,scale:1,logging:false});
+const ctx=c.getContext('2d');
+const results=regions.map(r=>{
+const imgData=ctx.getImageData(r.x,r.y,r.width,r.height);
+let red=0,green=0,blue=0,count=0;
+for(let i=0;i<imgData.data.length;i+=4){
+red+=imgData.data[i];
+green+=imgData.data[i+1];
+blue+=imgData.data[i+2];
+count++;
+}
+red=Math.round(red/count);
+green=Math.round(green/count);
+blue=Math.round(blue/count);
+const brightness=red*0.299+green*0.587+blue*0.114;
+return{name:r.name,color:\`rgb(\${red},\${green},\${blue})\`,brightness,canvas:extractRegion(c,r.x,r.y,r.width,r.height)};
+});
+const darkCount=results.filter(r=>r.brightness<128).length;
+const theme=darkCount>0?'light':'dark';
+parent.postMessage({action:'result',theme,results,fullCanvas:c.toDataURL()},'*');
+}catch(err){
+parent.postMessage({action:'error',error:err.message},'*');
+}
+}
+});
+function extractRegion(canvas,x,y,w,h){
+const temp=document.createElement('canvas');
+temp.width=w;temp.height=h;
+const ctx=temp.getContext('2d');
+ctx.drawImage(canvas,x,y,w,h,0,0,w,h);
+return temp.toDataURL();
+}
+parent.postMessage({action:'ready'},'*');
+<\/script></body></html>`;
+
+function getRegions(){
+const iframeRect=iframe.getBoundingClientRect();
+const timeRect=timeEl.getBoundingClientRect();
+const iconsRect=iconsEl.getBoundingClientRect();
+return[
+{name:'time',x:timeRect.left-iframeRect.left,y:timeRect.top-iframeRect.top,width:timeRect.width,height:timeRect.height},
+{name:'icons',x:iconsRect.left-iframeRect.left,y:iconsRect.top-iframeRect.top,width:iconsRect.width,height:iconsRect.height}
+];
+}
+
+function startAnalysis(){
+if(analysisInterval)clearInterval(analysisInterval);
+const interval=Math.round(1000/currentRate);
+analysisInterval=setInterval(()=>{
+iframe.contentWindow.postMessage({action:'analyze',regions:getRegions()},'*');
+},interval);
+indicator.classList.add('active');
+indicator.classList.remove('inactive');
+}
+
+function stopAnalysis(){
+if(analysisInterval){
+clearInterval(analysisInterval);
+analysisInterval=null;
+}
+indicator.classList.remove('active');
+indicator.classList.add('inactive');
+}
+
+samplingRate.addEventListener('input',(e)=>{
+currentRate=parseFloat(e.target.value);
+rateValue.textContent=currentRate.toFixed(1);
+intervalValue.textContent=Math.round(1000/currentRate);
+if(analysisInterval){
+stopAnalysis();
+startAnalysis();
+}
+});
+
+window.addEventListener('message',(e)=>{
+if(e.data.action==='ready'){
+info.innerHTML='<strong>✓ Iframe ready</strong>';
+startAnalysis();
+}
+else if(e.data.action==='result'){
+statusBar.style.color=e.data.theme==='light'?'#fff':'#000';
+const timeResult=e.data.results.find(r=>r.name==='time');
+const iconsResult=e.data.results.find(r=>r.name==='icons');
+info.innerHTML=`<strong>Theme:</strong> ${e.data.theme}
+<strong>Time:</strong> ${timeResult.color} (brightness: ${timeResult.brightness.toFixed(0)})
+<strong>Icons:</strong> ${iconsResult.color} (brightness: ${iconsResult.brightness.toFixed(0)})
+<strong>Rate:</strong> ${currentRate.toFixed(1)} Hz`;
+const loadCanvas=(canvas,dataURL)=>{
+const img=new Image();
+img.onload=()=>{
+canvas.width=img.width;
+canvas.height=img.height;
+canvas.getContext('2d').drawImage(img,0,0);
+};
+img.src=dataURL;
+};
+loadCanvas(timeCanvas,timeResult.canvas);
+loadCanvas(iconsCanvas,iconsResult.canvas);
+loadCanvas(fullCanvas,e.data.fullCanvas);
+timeSwatch.style.backgroundColor=timeResult.color;
+timeSwatch.style.color=timeResult.brightness>128?'#000':'#fff';
+timeSwatch.textContent=timeResult.color;
+iconsSwatch.style.backgroundColor=iconsResult.color;
+iconsSwatch.style.color=iconsResult.brightness>128?'#000':'#fff';
+iconsSwatch.textContent=iconsResult.color;
+}
+else if(e.data.action==='error'){
+info.innerHTML=`<strong style="color:red">Error:</strong> ${e.data.error}`;
+}
+});
+
+indicator.classList.add('inactive');
+</script>
+</body></html>
